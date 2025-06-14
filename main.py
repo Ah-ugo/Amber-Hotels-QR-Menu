@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from typing import List, Optional
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -60,6 +60,15 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 
+# Helper function to convert MongoDB document to dict with string id
+def convert_mongo_doc(doc):
+    if doc is None:
+        return None
+    doc["id"] = str(doc["_id"])
+    doc.pop("_id", None)
+    return doc
+
+
 # Pydantic Models
 class MenuItem(BaseModel):
     id: Optional[str] = Field(None, alias="_id")
@@ -68,9 +77,10 @@ class MenuItem(BaseModel):
     category: str
     image_url: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
-        json_encoders = {ObjectId: str}
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True
+    )
 
 
 class OrderItem(BaseModel):
@@ -86,9 +96,10 @@ class Order(BaseModel):
     status: str = "pending"
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    class Config:
-        populate_by_name = True
-        json_encoders = {ObjectId: str}
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True
+    )
 
 
 class Table(BaseModel):
@@ -98,9 +109,10 @@ class Table(BaseModel):
     qr_image_url: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    class Config:
-        populate_by_name = True
-        json_encoders = {ObjectId: str}
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True
+    )
 
 
 class Admin(BaseModel):
@@ -143,7 +155,7 @@ async def get_current_admin(token: str = Depends(oauth2_scheme)):
     admin = await db.admins.find_one({"username": username})
     if admin is None:
         raise credentials_exception
-    return admin
+    return convert_mongo_doc(admin)
 
 
 async def send_email(subject: str, body: str, to_email: str):
@@ -215,14 +227,14 @@ async def create_menu_item(
         "image_url": upload_result["secure_url"]
     }
     result = await db.menus.insert_one(item_dict)
-    item_dict["_id"] = str(result.inserted_id)
-    return MenuItem(**item_dict)
+    item = await db.menus.find_one({"_id": result.inserted_id})
+    return MenuItem(**convert_mongo_doc(item))
 
 
 @app.get("/menu", response_model=List[MenuItem])
 async def get_menu():
     items = await db.menus.find().to_list(100)
-    return [MenuItem(**item) for item in items]
+    return [MenuItem(**convert_mongo_doc(item)) for item in items]
 
 
 @app.patch("/menu/{id}")
@@ -256,7 +268,7 @@ async def update_menu_item(
         raise HTTPException(status_code=404, detail="Item not found")
 
     updated_item = await db.menus.find_one({"_id": ObjectId(id)})
-    return MenuItem(**updated_item)
+    return MenuItem(**convert_mongo_doc(updated_item))
 
 
 @app.delete("/menu/{id}")
@@ -278,14 +290,14 @@ async def create_table(table_number: int = Form(...), admin: dict = Depends(get_
         "created_at": datetime.utcnow()
     }
     result = await db.tables.insert_one(table_dict)
-    table_dict["_id"] = str(result.inserted_id)
-    return Table(**table_dict)
+    table = await db.tables.find_one({"_id": result.inserted_id})
+    return Table(**convert_mongo_doc(table))
 
 
 @app.get("/tables", response_model=List[Table])
 async def get_tables(admin: dict = Depends(get_current_admin)):
     tables = await db.tables.find().to_list(100)
-    return [Table(**table) for table in tables]
+    return [Table(**convert_mongo_doc(table)) for table in tables]
 
 
 @app.delete("/table/{table_number}")
@@ -306,25 +318,25 @@ async def create_order(order: Order):
         if not await db.menus.find_one({"_id": ObjectId(item.item_id)}):
             raise HTTPException(status_code=400, detail=f"Menu item {item.item_id} not found")
 
-    order_dict = order.dict()
+    order_dict = order.model_dump()
     order_dict["created_at"] = datetime.utcnow()
     result = await db.orders.insert_one(order_dict)
-    order_dict["_id"] = str(result.inserted_id)
+    order = await db.orders.find_one({"_id": result.inserted_id})
 
     admins = await db.admins.find().to_list(100)
     for admin in admins:
         await send_email(
             subject="New Order Received",
-            body=f"New order for table {order.table_number}. Order ID: {order_dict['_id']}",
+            body=f"New order for table {order.table_number}. Order ID: {str(result.inserted_id)}",
             to_email=admin["email"]
         )
-    return Order(**order_dict)
+    return Order(**convert_mongo_doc(order))
 
 
 @app.get("/orders", response_model=List[Order])
 async def get_all_orders(admin: dict = Depends(get_current_admin)):
     orders = await db.orders.find().to_list(100)
-    return [Order(**order) for order in orders]
+    return [Order(**convert_mongo_doc(order)) for order in orders]
 
 
 @app.get("/orders/{table_number}", response_model=List[Order])
@@ -332,7 +344,7 @@ async def get_table_orders(table_number: int, admin: dict = Depends(get_current_
     if not await db.tables.find_one({"table_number": table_number}):
         raise HTTPException(status_code=404, detail="Table not found")
     orders = await db.orders.find({"table_number": table_number}).to_list(100)
-    return [Order(**order) for order in orders]
+    return [Order(**convert_mongo_doc(order)) for order in orders]
 
 
 @app.patch("/order/{id}/status")
