@@ -24,7 +24,7 @@ app = FastAPI(title="Hotel Digital Menu System")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://amber-hotels-menu.onrender.com", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -311,26 +311,34 @@ async def delete_table(table_number: int, admin: dict = Depends(get_current_admi
 # Order Management Routes
 @app.post("/order")
 async def create_order(order: Order):
-    if not await db.tables.find_one({"table_number": order.table_number}):
+    # Convert the Pydantic model to dict explicitly if needed
+    order_dict = order.model_dump()
+
+    if not await db.tables.find_one({"table_number": order_dict["table_number"]}):
         raise HTTPException(status_code=400, detail="Table not found")
 
-    for item in order.items:
-        if not await db.menus.find_one({"_id": ObjectId(item.item_id)}):
-            raise HTTPException(status_code=400, detail=f"Menu item {item.item_id} not found")
+    # Check menu items exist
+    for item in order_dict["items"]:
+        if not await db.menus.find_one({"_id": ObjectId(item["item_id"])}):
+            raise HTTPException(status_code=400, detail=f"Menu item {item['item_id']} not found")
 
-    order_dict = order.model_dump()
+    # Add created_at timestamp
     order_dict["created_at"] = datetime.utcnow()
-    result = await db.orders.insert_one(order_dict)
-    order = await db.orders.find_one({"_id": result.inserted_id})
 
+    # Insert into database
+    result = await db.orders.insert_one(order_dict)
+    inserted_order = await db.orders.find_one({"_id": result.inserted_id})
+
+    # Send email notifications
     admins = await db.admins.find().to_list(100)
     for admin in admins:
         await send_email(
             subject="New Order Received",
-            body=f"New order for table {order.table_number}. Order ID: {str(result.inserted_id)}",
+            body=f"New order for table {order_dict['table_number']}. Order ID: {str(result.inserted_id)}",
             to_email=admin["email"]
         )
-    return Order(**convert_mongo_doc(order))
+
+    return Order(**convert_mongo_doc(inserted_order))
 
 
 @app.get("/orders", response_model=List[Order])
