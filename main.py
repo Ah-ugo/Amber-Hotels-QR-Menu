@@ -40,7 +40,7 @@ EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = os.getenv("EMAIL_PORT", 587)
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")
-BASE_URL = os.getenv("BASE_URL", "http://amberhotels.com/menu")
+BASE_URL = os.getenv("BASE_URL", "https://amber-hotels-menu.onrender.com/")
 
 # MongoDB setup
 client = AsyncIOMotorClient(MONGODB_URL)
