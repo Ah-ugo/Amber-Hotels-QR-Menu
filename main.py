@@ -17,6 +17,7 @@ from email.mime.text import MIMEText
 import os
 import asyncio
 from dotenv import load_dotenv
+
 load_dotenv()
 
 app = FastAPI(title="Hotel Digital Menu System")
@@ -61,10 +62,15 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # Pydantic Models
 class MenuItem(BaseModel):
+    id: Optional[str] = Field(None, alias="_id")
     name: str
     price: float
     category: str
     image_url: Optional[str] = None
+
+    class Config:
+        populate_by_name = True
+        json_encoders = {ObjectId: str}
 
 
 class OrderItem(BaseModel):
@@ -73,18 +79,28 @@ class OrderItem(BaseModel):
 
 
 class Order(BaseModel):
+    id: Optional[str] = Field(None, alias="_id")
     table_number: int
     items: List[OrderItem]
     notes: Optional[str] = None
     status: str = "pending"
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+    class Config:
+        populate_by_name = True
+        json_encoders = {ObjectId: str}
+
 
 class Table(BaseModel):
+    id: Optional[str] = Field(None, alias="_id")
     table_number: int
     qr_code: Optional[str] = None
-    qr_image_url: Optional[str] = None  # New field for Cloudinary QR code URL
+    qr_image_url: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Config:
+        populate_by_name = True
+        json_encoders = {ObjectId: str}
 
 
 class Admin(BaseModel):
@@ -200,15 +216,13 @@ async def create_menu_item(
     }
     result = await db.menus.insert_one(item_dict)
     item_dict["_id"] = str(result.inserted_id)
-    return item_dict
+    return MenuItem(**item_dict)
 
 
 @app.get("/menu", response_model=List[MenuItem])
 async def get_menu():
     items = await db.menus.find().to_list(100)
-    for item in items:
-        item["_id"] = str(item["_id"])
-    return items
+    return [MenuItem(**item) for item in items]
 
 
 @app.patch("/menu/{id}")
@@ -242,8 +256,7 @@ async def update_menu_item(
         raise HTTPException(status_code=404, detail="Item not found")
 
     updated_item = await db.menus.find_one({"_id": ObjectId(id)})
-    updated_item["_id"] = str(updated_item["_id"])
-    return updated_item
+    return MenuItem(**updated_item)
 
 
 @app.delete("/menu/{id}")
@@ -266,15 +279,13 @@ async def create_table(table_number: int = Form(...), admin: dict = Depends(get_
     }
     result = await db.tables.insert_one(table_dict)
     table_dict["_id"] = str(result.inserted_id)
-    return table_dict
+    return Table(**table_dict)
 
 
-@app.get("/tables")
+@app.get("/tables", response_model=List[Table])
 async def get_tables(admin: dict = Depends(get_current_admin)):
     tables = await db.tables.find().to_list(100)
-    for table in tables:
-        table["_id"] = str(table["_id"])
-    return tables
+    return [Table(**table) for table in tables]
 
 
 @app.delete("/table/{table_number}")
@@ -307,25 +318,21 @@ async def create_order(order: Order):
             body=f"New order for table {order.table_number}. Order ID: {order_dict['_id']}",
             to_email=admin["email"]
         )
-    return order_dict
+    return Order(**order_dict)
 
 
-@app.get("/orders")
+@app.get("/orders", response_model=List[Order])
 async def get_all_orders(admin: dict = Depends(get_current_admin)):
     orders = await db.orders.find().to_list(100)
-    for order in orders:
-        order["_id"] = str(order["_id"])
-    return orders
+    return [Order(**order) for order in orders]
 
 
-@app.get("/orders/{table_number}")
+@app.get("/orders/{table_number}", response_model=List[Order])
 async def get_table_orders(table_number: int, admin: dict = Depends(get_current_admin)):
     if not await db.tables.find_one({"table_number": table_number}):
         raise HTTPException(status_code=404, detail="Table not found")
     orders = await db.orders.find({"table_number": table_number}).to_list(100)
-    for order in orders:
-        order["_id"] = str(order["_id"])
-    return orders
+    return [Order(**order) for order in orders]
 
 
 @app.patch("/order/{id}/status")
@@ -371,22 +378,18 @@ async def get_qr_image(table_number: int):
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
-    # Return cached QR code URL if it exists
     if table.get("qr_image_url"):
         return {"qr_image_url": table["qr_image_url"]}
 
-    # Generate QR code
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(f"{BASE_URL}?table={table_number}")
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
 
-    # Save to buffer
     buffer = BytesIO()
     img.save(buffer, format="PNG")
     buffer.seek(0)
 
-    # Upload to Cloudinary
     try:
         upload_result = cloudinary.uploader.upload(
             buffer,
@@ -397,7 +400,6 @@ async def get_qr_image(table_number: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"QR code upload failed: {str(e)}")
 
-    # Store URL in table
     qr_image_url = upload_result["secure_url"]
     await db.tables.update_one(
         {"table_number": table_number},
