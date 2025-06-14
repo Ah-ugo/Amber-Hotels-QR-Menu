@@ -24,7 +24,7 @@ app = FastAPI(title="Hotel Digital Menu System")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://amber-hotels-menu.onrender.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
