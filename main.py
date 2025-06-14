@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
@@ -19,6 +20,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = FastAPI(title="Hotel Digital Menu System")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Configuration
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
